@@ -9,6 +9,8 @@ import pg from 'pg';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import fetch from 'node-fetch';
+import { createTickTickTask, getTickTickHeaders, TICKTICK_BASE } from './ticktick.js';
 
 // Load environment variables
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +24,8 @@ const pool = new pg.Pool({
     rejectUnauthorized: false
   }
 });
+
+// TickTick helpers moved to ./ticktick.js
 
 // Conversion helpers
 const metersToMiles = (meters) => (meters * 0.000621371).toFixed(2);
@@ -129,6 +133,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           days: { type: 'number', description: 'Number of days to analyze (default: 30)' },
           project_id: { type: 'string', description: 'Filter by specific project' }
         }
+      }
+    },
+    {
+      name: 'create_ticktick_task',
+      description: 'Create a new task in TickTick',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Task title (required)' },
+          project_id: { type: 'string', description: 'Project ID to create task in' },
+          content: { type: 'string', description: 'Task content/description' },
+          desc: { type: 'string', description: 'Task description (alternative to content)' },
+          is_all_day: { type: 'boolean', description: 'Whether task is all day' },
+          start_date: { type: 'string', description: 'Task start date (ISO format)' },
+          due_date: { type: 'string', description: 'Task due date (ISO format)' },
+          time_zone: { type: 'string', description: 'Time zone for the task' },
+          repeat_flag: { type: 'string', description: 'Repeat pattern (e.g., RRULE:FREQ=DAILY)' },
+          reminders: { 
+            type: 'array', 
+            description: 'Array of reminder times',
+            items: { type: 'string' }
+          },
+          priority: { type: 'number', description: 'Task priority (0=none, 1=low, 3=medium, 5=high)' },
+          tags: { 
+            type: 'array', 
+            description: 'Task tags',
+            items: { type: 'string' }
+          }
+        },
+        required: ['title']
       }
     }
   ],
@@ -412,6 +446,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: 'text',
             text: JSON.stringify(stats, null, 2)
+          }]
+        };
+      }
+
+      case 'create_ticktick_task': {
+        const { createdTask } = await createTickTickTask(pool, args, fetch);
+        return {
+          content: [{
+            type: 'text',
+            text: `Successfully created TickTick task:\n${JSON.stringify({
+              id: createdTask.id,
+              title: createdTask.title,
+              project_id: createdTask.projectId,
+              due_date: createdTask.dueDate,
+              priority: createdTask.priority,
+              tags: createdTask.tags,
+              created_time: createdTask.createdTime
+            }, null, 2)}`
           }]
         };
       }
