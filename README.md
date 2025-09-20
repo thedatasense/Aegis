@@ -12,7 +12,7 @@ Aegis is a unified personal dashboard that brings together your fitness data fro
 
 ### Why Aegis?
 
-In our digital age, personal data is scattered across multiple platforms:
+If you are like me, all my personal metrics is scattered across multiple platforms:
 - Fitness activities locked in Strava
 - Tasks and productivity metrics trapped in TickTick
 - Health metrics manually tracked in various apps
@@ -218,13 +218,6 @@ Built with:
 - [MCP SDK](https://modelcontextprotocol.io/) - Claude Desktop integration
 - [psycopg](https://www.psycopg.org/) - PostgreSQL adapter
 
-## 📮 Support
-
-- 📧 Email: your.email@example.com
-- 💬 Discord: [Join our community](https://discord.gg/yourinvite)
-- 🐛 Issues: [GitHub Issues](https://github.com/yourusername/aegis/issues)
-
----
 
 <div align="center">
   <p>Built with ❤️ for the quantified self community</p>
