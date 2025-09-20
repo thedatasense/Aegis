@@ -10,7 +10,8 @@
       "Bash(git push:*)",
       "Bash(npm install:*)",
       "Bash(ls:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": []
   }

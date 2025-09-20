@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aegis-fast-mcp"
+version = "1.0.0"
+description = "Fast MCP server for Aegis fitness and productivity tracking"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Aegis Team" }
+]
+keywords = ["mcp", "fitness", "productivity", "strava", "ticktick"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastmcp>=0.1.8",
+    "python-dotenv>=1.0.0",
+    "psycopg[binary]>=3.1.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.24.0",
+]
+
+[project.scripts]
+aegis-fast-mcp = "server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.fastmcp]
+server_name = "aegis-fast-mcp"
+version = "1.0.0"
+description = "High-performance MCP server for Aegis that directly uses Python modules"

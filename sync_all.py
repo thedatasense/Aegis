@@ -17,7 +17,7 @@ import traceback
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.db import db, init_schema
-from app.strava import get_activities, upsert_activities
+from app.strava import fetch_all_activities, upsert_activities
 from app.ticktick import list_projects, get_project_tasks, upsert_tasks
 
 # Configure logging
@@ -74,9 +74,8 @@ def sync_strava(days_back: int = 30, logger: logging.Logger = None) -> Dict[str,
         start_date = end_date - timedelta(days=days_back)
         
         # Fetch activities
-        activities = get_activities(
-            after_ts=int(start_date.timestamp()),
-            before_ts=int(end_date.timestamp())
+        activities = fetch_all_activities(
+            after=int(start_date.timestamp())
         )
         
         if not activities:
