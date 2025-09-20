@@ -1,0 +1,61 @@
+# Aegis Sync Crontab Example
+# 
+# To install these cron jobs:
+# 1. Edit paths to match your installation
+# 2. Run: crontab crontab.example
+#
+# To view current crontab: crontab -l
+# To edit crontab: crontab -e
+
+# Set PATH for cron environment
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# === REGULAR SYNCS ===
+
+# Sync Strava every 2 hours during the day (6 AM to 10 PM)
+# Only syncs activities from the last 2 days for efficiency
+0 6-22/2 * * * /path/to/aegis/scripts/cron_wrapper.sh --skip-ticktick --strava-days 2
+
+# Sync TickTick tasks three times a day (8 AM, 2 PM, 8 PM)
+0 8,14,20 * * * /path/to/aegis/scripts/cron_wrapper.sh --skip-strava
+
+# === DAILY COMPREHENSIVE SYNC ===
+
+# Full sync every night at 2 AM
+# Syncs last 7 days of Strava data and all TickTick projects
+0 2 * * * /path/to/aegis/scripts/cron_wrapper.sh --strava-days 7 --status-file /path/to/aegis/logs/daily-status.json
+
+# === WEEKLY DEEP SYNC ===
+
+# Deep sync every Sunday at 3 AM
+# Syncs last 90 days of data and initializes database schema
+0 3 * * 0 /path/to/aegis/scripts/cron_wrapper.sh --strava-days 90 --init-db --status-file /path/to/aegis/logs/weekly-status.json
+
+# === MAINTENANCE ===
+
+# Clean up old log files every Monday at 4 AM
+# Removes logs older than 30 days
+0 4 * * 1 find /path/to/aegis/logs -name "*.log" -mtime +30 -delete
+
+# === MONITORING ===
+
+# Quick health check every hour
+# Just attempts to sync last 1 day to verify connectivity
+0 * * * * /path/to/aegis/scripts/cron_wrapper.sh --strava-days 1 --status-file /path/to/aegis/logs/health-check.json >/dev/null 2>&1
+
+# === NOTES ===
+# 
+# - Adjust paths to match your installation
+# - Logs are automatically created in the logs/ directory
+# - Status files can be monitored by external tools
+# - Times are in the system's local timezone
+# - Use 'crontab -e' to customize for your needs
+#
+# Cron Format Reminder:
+# ┌───────────── minute (0 - 59)
+# │ ┌───────────── hour (0 - 23)
+# │ │ ┌───────────── day of the month (1 - 31)
+# │ │ │ ┌───────────── month (1 - 12)
+# │ │ │ │ ┌───────────── day of the week (0 - 6) (Sunday = 0)
+# │ │ │ │ │
+# * * * * * command to execute
