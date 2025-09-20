@@ -1,37 +1,179 @@
 #!/usr/bin/env python3
-"""Fast MCP server for Aegis using FastMCP framework."""
+"""Fast MCP server for Aegis using FastMCP framework - Standalone version."""
 
 import os
 import sys
 import json
+import time
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
 
-# Add parent directory to path to import app modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Load environment variables first
+# Load environment variables
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / '.env')
+load_dotenv()
 
 from fastmcp import FastMCP, Context
 from fastmcp.tools import tool
-
-# Import Aegis modules directly
-from app.db import db, init_schema
-from app.strava import get_strava_data, refresh_strava_token
-from app.ticktick import get_ticktick_data, refresh_ticktick_token, create_task
-from app.models import DailyMetrics
+import psycopg
+from psycopg.rows import dict_row
 
 # Initialize FastMCP server
 mcp = FastMCP("aegis-fast")
 
-# Initialize database on startup
-try:
-    init_schema()
-except Exception as e:
-    print(f"Warning: Could not initialize database schema: {e}", file=sys.stderr)
+# Database connection management
+@contextmanager
+def get_db_connection():
+    """Get a database connection with dict_row factory."""
+    conn = psycopg.connect(
+        os.environ["DATABASE_URL"],
+        row_factory=dict_row
+    )
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+# Strava API functions
+def refresh_strava_token():
+    """Refresh Strava access token."""
+    refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
+    if not refresh_token:
+        raise RuntimeError("Missing STRAVA_REFRESH_TOKEN")
+    
+    data = {
+        "client_id": os.getenv("STRAVA_CLIENT_ID"),
+        "client_secret": os.getenv("STRAVA_CLIENT_SECRET"),
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+    
+    r = requests.post("https://www.strava.com/oauth/token", data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+def fetch_strava_activities(after_days: int = 30) -> List[Dict[str, Any]]:
+    """Fetch Strava activities from the last N days."""
+    token_data = refresh_strava_token()
+    token = token_data if isinstance(token_data, str) else token_data
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    after = int((datetime.now() - timedelta(days=after_days)).timestamp())
+    
+    activities = []
+    page = 1
+    while True:
+        params = {"per_page": 200, "page": page, "after": after}
+        r = requests.get(
+            "https://www.strava.com/api/v3/athlete/activities",
+            headers=headers,
+            params=params,
+            timeout=60
+        )
+        r.raise_for_status()
+        
+        batch = r.json()
+        if not batch:
+            break
+        activities.extend(batch)
+        page += 1
+        time.sleep(0.1)  # Be polite to API
+    
+    return activities
+
+# TickTick API functions
+def refresh_ticktick_token():
+    """Refresh TickTick access token."""
+    refresh_token = os.getenv("TICKTICK_REFRESH_TOKEN")
+    if not refresh_token:
+        raise RuntimeError("Missing TICKTICK_REFRESH_TOKEN")
+    
+    data = {
+        "client_id": os.getenv("TICKTICK_CLIENT_ID"),
+        "client_secret": os.getenv("TICKTICK_CLIENT_SECRET"),
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }
+    
+    r = requests.post("https://ticktick.com/oauth/token", data=data, timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+def fetch_ticktick_tasks(project_id: str) -> List[Dict[str, Any]]:
+    """Fetch tasks for a specific project."""
+    token = refresh_ticktick_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    r = requests.get(
+        f"https://api.ticktick.com/open/v1/project/{project_id}/tasks",
+        headers=headers,
+        timeout=30
+    )
+    r.raise_for_status()
+    return r.json()
+
+def create_ticktick_task(
+    title: str,
+    project_id: Optional[str] = None,
+    content: Optional[str] = None,
+    due_date: Optional[str] = None,
+    priority: int = 0,
+    tags: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Create a new TickTick task."""
+    token = refresh_ticktick_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    task_data = {
+        "title": title,
+        "content": content or "",
+        "priority": priority,
+        "tags": tags or []
+    }
+    
+    if project_id:
+        task_data["projectId"] = project_id
+    if due_date:
+        task_data["dueDate"] = due_date
+    
+    r = requests.post(
+        "https://api.ticktick.com/open/v1/task",
+        headers=headers,
+        json=task_data,
+        timeout=30
+    )
+    r.raise_for_status()
+    return r.json()
+
+# Initialize database schema
+def init_schema():
+    """Initialize database schema."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Check if tables exist
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'strava_activities'
+                    )
+                """)
+                if not cur.fetchone()["exists"]:
+                    print("Database tables not found. Please run the main app first to initialize schema.")
+    except Exception as e:
+        print(f"Warning: Could not check database schema: {e}")
+
+# Initialize on startup
+init_schema()
 
 @tool
 async def get_strava_activities(
@@ -50,7 +192,7 @@ async def get_strava_activities(
         start_date: Filter activities after this date (ISO format)
         end_date: Filter activities before this date (ISO format)
     """
-    with db() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             query = "SELECT * FROM strava_activities WHERE 1=1"
             params = []
@@ -72,17 +214,16 @@ async def get_strava_activities(
                 params.append(limit)
             
             cur.execute(query, params)
-            activities = []
-            for row in cur.fetchall():
-                activity = dict(zip([col.name for col in cur.description], row))
-                # Add converted units
+            activities = cur.fetchall()
+            
+            # Add converted units
+            for activity in activities:
                 if activity.get("distance"):
                     activity["distance_miles"] = round(activity["distance"] * 0.000621371, 2)
                     activity["distance_km"] = round(activity["distance"] / 1000, 2)
                 if activity.get("average_speed"):
                     activity["average_speed_mph"] = round(activity["average_speed"] * 2.23694, 2)
                     activity["average_speed_kph"] = round(activity["average_speed"] * 3.6, 2)
-                activities.append(activity)
             
             return json.dumps(activities, indent=2, default=str)
 
@@ -95,15 +236,12 @@ async def sync_strava_activities(context: Context, force: bool = False) -> str:
         force: Force sync even if recently synced
     """
     try:
-        # Refresh token
-        refresh_strava_token()
-        
         # Get activities from last 30 days
-        activities = get_strava_data(after_days=30)
+        activities = fetch_strava_activities(after_days=30)
         
         # Upsert to database
         count = 0
-        with db() as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cur:
                 for activity in activities:
                     cur.execute("""
@@ -165,7 +303,7 @@ async def get_ticktick_tasks(
         start_date: Filter tasks after this date
         end_date: Filter tasks before this date
     """
-    with db() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             query = "SELECT * FROM ticktick_tasks WHERE 1=1"
             params = []
@@ -191,10 +329,7 @@ async def get_ticktick_tasks(
                 params.append(limit)
             
             cur.execute(query, params)
-            tasks = []
-            for row in cur.fetchall():
-                task = dict(zip([col.name for col in cur.description], row))
-                tasks.append(task)
+            tasks = cur.fetchall()
             
             return json.dumps(tasks, indent=2, default=str)
 
@@ -207,15 +342,12 @@ async def sync_ticktick_tasks(context: Context, project_id: str) -> str:
         project_id: Project ID to sync (required)
     """
     try:
-        # Refresh token
-        refresh_ticktick_token()
-        
         # Get tasks for project
-        tasks = get_ticktick_data(project_id)
+        tasks = fetch_ticktick_tasks(project_id)
         
         # Upsert to database
         count = 0
-        with db() as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cur:
                 for task in tasks:
                     cur.execute("""
@@ -272,7 +404,7 @@ async def get_daily_metrics(
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
     """
-    with db() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             query = "SELECT * FROM daily_metrics WHERE 1=1"
             params = []
@@ -287,10 +419,7 @@ async def get_daily_metrics(
             query += " ORDER BY day DESC"
             
             cur.execute(query, params)
-            metrics = []
-            for row in cur.fetchall():
-                metric = dict(zip([col.name for col in cur.description], row))
-                metrics.append(metric)
+            metrics = cur.fetchall()
             
             return json.dumps(metrics, indent=2, default=str)
 
@@ -315,39 +444,26 @@ async def update_daily_metrics(
         weight_kg: Body weight in kg
         notes: Notes for the day
     """
-    metrics = DailyMetrics(
-        day=day,
-        calorie_in=calorie_in,
-        calorie_out=calorie_out,
-        protein_g=protein_g,
-        weight_kg=weight_kg,
-        notes=notes
-    )
-    
-    with db() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
-            fields = []
-            values = []
+            fields = ["day"]
+            values = [day]
             
-            # Build dynamic query based on provided fields
-            fields.append("day")
-            values.append(metrics.day)
-            
-            if metrics.calorie_in is not None:
+            if calorie_in is not None:
                 fields.append("calorie_in")
-                values.append(metrics.calorie_in)
-            if metrics.calorie_out is not None:
+                values.append(calorie_in)
+            if calorie_out is not None:
                 fields.append("calorie_out")
-                values.append(metrics.calorie_out)
-            if metrics.protein_g is not None:
+                values.append(calorie_out)
+            if protein_g is not None:
                 fields.append("protein_g")
-                values.append(metrics.protein_g)
-            if metrics.weight_kg is not None:
+                values.append(protein_g)
+            if weight_kg is not None:
                 fields.append("weight_kg")
-                values.append(metrics.weight_kg)
-            if metrics.notes is not None:
+                values.append(weight_kg)
+            if notes is not None:
                 fields.append("notes")
-                values.append(metrics.notes)
+                values.append(notes)
             
             # Create update clause
             update_fields = [f"{f} = EXCLUDED.{f}" for f in fields if f != "day"]
@@ -362,9 +478,8 @@ async def update_daily_metrics(
             
             cur.execute(query, values)
             result = cur.fetchone()
-            updated = dict(zip([col.name for col in cur.description], result))
             
-            return f"Successfully updated metrics for {metrics.day}:\n{json.dumps(updated, indent=2, default=str)}"
+            return f"Successfully updated metrics for {day}:\n{json.dumps(result, indent=2, default=str)}"
 
 @tool
 async def analyze_fitness_trends(
@@ -382,7 +497,7 @@ async def analyze_fitness_trends(
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
     
-    with db() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
             # Get activity stats
             cur.execute("""
@@ -396,10 +511,7 @@ async def analyze_fitness_trends(
                 GROUP BY type
             """, (start_date.isoformat(), end_date.isoformat()))
             
-            activities = []
-            for row in cur.fetchall():
-                activity = dict(zip([col.name for col in cur.description], row))
-                activities.append(activity)
+            activities = cur.fetchall()
             
             # Get metrics stats
             cur.execute("""
@@ -413,8 +525,7 @@ async def analyze_fitness_trends(
                 WHERE day >= %s AND day <= %s
             """, (start_date.date().isoformat(), end_date.date().isoformat()))
             
-            metrics_row = cur.fetchone()
-            metrics_data = dict(zip([col.name for col in cur.description], metrics_row)) if metrics_row else {}
+            metrics_data = cur.fetchone() or {}
             
             # Build analysis
             analysis = {
@@ -465,11 +576,8 @@ async def create_ticktick_task(
         tags: Task tags
     """
     try:
-        # Refresh token
-        refresh_ticktick_token()
-        
         # Create task via API
-        task = create_task(
+        task = create_ticktick_task(
             title=title,
             project_id=project_id,
             content=content,
@@ -479,7 +587,7 @@ async def create_ticktick_task(
         )
         
         # Insert into database
-        with db() as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO ticktick_tasks (
