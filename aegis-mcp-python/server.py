@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Optional
 # Add parent directory to path to import app modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load environment variables first
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / '.env')
+
 from fastmcp import FastMCP, Context
 from fastmcp.tools import tool
 
@@ -24,7 +28,10 @@ from app.models import DailyMetrics
 mcp = FastMCP("aegis-fast")
 
 # Initialize database on startup
-init_schema()
+try:
+    init_schema()
+except Exception as e:
+    print(f"Warning: Could not initialize database schema: {e}", file=sys.stderr)
 
 @tool
 async def get_strava_activities(
